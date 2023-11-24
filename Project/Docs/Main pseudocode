@@ -1,0 +1,19 @@
+START 		GOTO 	FORWARD
+
+FORWARD		IF		(Rear Bumper Detected)										THEN GOTO ALL_STOP
+			
+			;steering
+			ELSEIF	(SENSOR_MID < TH_MIDDLE) && (SENSOR_LINE > TH_LINE_LEFT) 	THEN GOTO L_TURN
+			ELSEIF	(SENSOR_MID < TH_MIDDLE) && (SENSOR_LINE < TH_LINE_RIGHT) 	THEN GOTO R_TURN
+
+			ELSE 	GOTO FORWARD
+
+;subroutine steers left to position on line
+L_TURN		IF 		(SENSOR_MID > TH_MIDDLE )	;or we can use a short timer	THEN GOTO FORWARD
+			ELSE	GOTO L_TURN
+
+;subroutine steers right to position on line
+R_TURN		IF 		(SENSOR_MID > TH_MIDDLE)	;or we can use a short timer	THEN GOTO FORWARD
+			ELSE	GOTO L_TURN
+
+ALL_STOP	GOTO 	ALL_STOP
