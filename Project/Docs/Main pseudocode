@@ -1,19 +1,53 @@
-START 		GOTO 	FORWARD
+START 		IF	(Rear Bumper Detected)						THEN GOTO THINK
 
-FORWARD		IF		(Rear Bumper Detected)										THEN GOTO ALL_STOP
-			
-			;steering
-			ELSEIF	(SENSOR_MID < TH_MIDDLE) && (SENSOR_LINE > TH_LINE_LEFT) 	THEN GOTO L_TURN
-			ELSEIF	(SENSOR_MID < TH_MIDDLE) && (SENSOR_LINE < TH_LINE_RIGHT) 	THEN GOTO R_TURN
+THINK		TURN OFF ALL MOTORS
+		
+		IF	(Rear Bumper Detected)						THEN GOTO ALL_STOP	
 
-			ELSE 	GOTO FORWARD
+		;T intersection
+
+		ELSEIF	(SENSOR_A < TH_A)						THEN GOTO LEFT_TURN
+	
+		;left intersection (path open on the left)
+
+		ELSEIF	(SENSOR_D < TH_D)						THEN GOTO LEFT_TURN
+
+		;right intersection (path open on the right)
+
+		ELSEIF	(SENSOR_B < TH_B)						THEN GOTO RIGHT_TURN
+
+		;steering
+
+		ELSEIF	(SENSOR_MID < TH_MIDDLE) && (SENSOR_LINE > TH_LINE_LEFT) 	THEN GOTO L_TURN
+		ELSEIF	(SENSOR_MID < TH_MIDDLE) && (SENSOR_LINE < TH_LINE_RIGHT) 	THEN GOTO R_TURN
+
+		ELSE 	GOTO FORWARD
+
+FORWARD		...
+		ELSE GOTO THINK
+
+REVERSE		...
+		ELSE GOTO TURN_AROUND
+		
 
 ;subroutine steers left to position on line
-L_TURN		IF 		(SENSOR_MID > TH_MIDDLE )	;or we can use a short timer	THEN GOTO FORWARD
+
+L_TURN		IF 	(T > T_R_TURN )							THEN GOTO FORWARD
 			ELSE	GOTO L_TURN
 
 ;subroutine steers right to position on line
-R_TURN		IF 		(SENSOR_MID > TH_MIDDLE)	;or we can use a short timer	THEN GOTO FORWARD
-			ELSE	GOTO L_TURN
+R_TURN		IF 	(T > T_LEFT)							THEN GOTO FORWARD
+			ELSE	GOTO R_TURN
+
+;turning left at an intersection
+LEFT_TURN	IF 	(T > 							THEN GOTO FORWARD
+			ELSE	GOTO LEFT_TURN
+
+;turning right at an intersection
+RIGHT_TURN	IF 		...							THEN GOTO FORWARD
+			ELSE	GOTO RIGHT_TURN
+
+;180 turn
+TURN_AROUND
 
 ALL_STOP	GOTO 	ALL_STOP

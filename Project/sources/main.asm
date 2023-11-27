@@ -36,15 +36,27 @@ NULL            EQU 00  ; The string 'null terminator'
 CR              EQU $0D  ; 'Carriage Return' character
 SPACE           EQU ' '  ; The 'space' character
 
+DLY_FWD         EQU 3000
+DLY_LEFT        EQU 3000
+DLY_RIGHT       EQU 4000
+MTR_B           EQU %00110000
+MTR_R           EQU %00100000
+MTR_L           EQU %00010000
+MTR_DB          EQU %00000011
+MTR_DR          EQU %00000010
+MTR_DL          EQU %00000001
+
 
 ; STATE MACHINE DEFINITIONS
 ;     SYSTEM STATES
-START           EQU     0
-FWD             EQU     1
-REV             EQU     2
-ALL_STP         EQU     3
-L_TURN          EQU     4
-R_TURN          EQU     5
+SS_START           EQU     0
+SS_FWD             EQU     1
+SS_REV             EQU     2
+SS_STOP            EQU     3
+SS_LEFT            EQU     4
+SS_RIGHT           EQU     5
+SS_180             EQU     6
+SS_THINK            EQU    7
 
 ;     DIRECTIONS
 NORTH           EQU     0
@@ -52,31 +64,40 @@ EAST            EQU     1
 WEST            EQU     2
 SOUTH           EQU     3
 
-;     MOTOR INITIALIZATIONS
+;     MOTOR TIMINGS
+TINT_180        EQU     46
+TINT_REV        EQU     69
 FWD_INT         EQU     69
-REV_INT         EQU     69
 FWD_TRN_INT     EQU     46
-REV_TRN_INT     EQU     46
+
+
 
 
 ; SENSOR THRESHOLDS
-TH_LINE_LEFT        EQU     $90
-TH_LINE_RIGHT       EQU     $70
-TH_MIDDLE       EQU     $B0
+TH_LINE_LEFT        EQU     $CE;$F0
+TH_LINE_RIGHT       EQU     $A8;$A0
+TH_MIDDLE           EQU     $A0
+TH_BOW              EQU     $89;$70
 
 
 
 ; variable/data section
              ORG $3800
+TIME_REV        ds.b    1
+TIME_180        ds.b    1
+
              
 TOF_COUNTER     dc.b    0
 CRNT_STATE      dc.b    3
 CRNT_DIR        dc.b    1
+LAST_DIR        dc.b    1
 T_FWD           ds.b    1
 T_REV           ds.b    1
 T_FWD_TRN       ds.b    1
 T_REV_TRN       ds.b    1
 
+DEBUG_1         dc.b   1
+DEBUG_2         dc.b   1
 
 ;---------------------------------------------------------------------------
 ; Storage Registers (9S12C32 RAM space: $3800 ... $3FFF)
@@ -84,7 +105,7 @@ SENSOR_LINE     FCB $01  ; Storage for guider sensor readings
 SENSOR_BOW      FCB $23  ; Initialized to test values
 SENSOR_PORT     FCB $45
 SENSOR_MID      FCB $67
-SENSOR_STBD     FCB $89
+SENSOR_STAR     FCB $89
 
 SENSOR_NUM      RMB 1   ; The currently selected sensor
 
@@ -133,7 +154,7 @@ MAIN            LDAA  PTT
                 LDAA    CRNT_STATE
                 JSR     DISPATCHER
                 
-                LDY #3000     ; 300 ms delay to avoid
+                LDY #1500     ; 150 ms delay to avoid
                 JSR del_50us    ;  display artifacts
                 BRA MAIN            ; Loop forever
 
@@ -161,138 +182,181 @@ sternOFF        STAA     BUMPER_STERN
                 RTS
 ; subrotine section
 ;---------------------------------------------------------------------------
-DISPATCHER    CMPA    #START
-              BNE     NOT_START
-              JSR     START_ST
-              BRA     DISP_EXIT
+DISPATCHER    CMPA    #SS_START        ; Start state
+              BNE     NOT_SS_START
+              JSR     STATE_START
+              BRA     DISPATCHER_EXIT
               
-NOT_START     CMPA    #ALL_STP
-              BNE     NOT_STP
-              JSR     ALL_STP_ST
-              BRA     DISP_EXIT
+NOT_SS_START  CMPA    #SS_STOP         ; Stop state
+              BNE     NOT_SS_STOP
+              JSR     STATE_STOP
+              BRA     DISPATCHER_EXIT
 
-NOT_STP       CMPA    #FWD
-              BNE     NOT_FWD
-              JSR     FWD_ST
-              BRA     DISP_EXIT
+NOT_SS_STOP   CMPA    #SS_FWD          ; Forward state
+              BNE     NOT_SS_FWD
+              JSR     STATE_FWD
+              BRA     DISPATCHER_EXIT
               
-NOT_FWD       CMPA    #REV
-              BNE     NOT_REV
-              NOP;JSR     REV_ST
-              BRA     DISP_EXIT 
+NOT_SS_FWD    CMPA    #SS_REV          ; Reverse state
+              BNE     NOT_SS_REV
+              JSR     STATE_REV
+              BRA     DISPATCHER_EXIT 
 
-NOT_REV       CMPA    #L_TURN
-              BNE     NOT_L_TURN
-              JSR     L_TURN_ST
-              BRA     DISP_EXIT           
+NOT_SS_REV    CMPA    #SS_LEFT         ; Left turn state
+              BNE     NOT_SS_LEFT
+              JSR     STATE_LEFT
+              BRA     DISPATCHER_EXIT           
 
-NOT_L_TURN    CMPA    #R_TURN
-              BNE     NOT_R_TRN
-              JSR     R_TURN_ST
-              BRA     DISP_EXIT
+NOT_SS_LEFT   CMPA    #SS_RIGHT        ; Right turn state
+              BNE     NOT_SS_RIGHT
+              JSR     STATE_RIGHT
+              BRA     DISPATCHER_EXIT
               
-NOT_R_TRN   SWI
-DISP_EXIT     RTS
+NOT_SS_RIGHT  CMPA    #SS_180        ; Right turn state
+              BNE     NOT_SS_180
+              JSR     STATE_180
+              BRA     DISPATCHER_EXIT
 
+NOT_SS_180    CMPA    #SS_THINK        ; Right turn state
+              BNE     NOT_SS_THINK
+              JSR     STATE_THINK
+              BRA     DISPATCHER_EXIT
+NOT_SS_THINK  SWI
+DISPATCHER_EXIT     RTS
 
 
 ***********************************************************
-START_ST      BRCLR   PORTAD0,$04,NO_FWD
-              JSR     INIT_FWD
-              MOVB    #FWD,CRNT_STATE
+STATE_STOP    BRSET   PORTAD0,$08,NOT_START ; Check if rear bumper is pushed
+              JSR     INIT_SS_STOP          ; if so, initialize stop
+              MOVB    #SS_START,CRNT_STATE  ; set current tate to start
+              BRA     STOP_EXIT             ; exit
+
+
+NOT_START      NOP
+STOP_EXIT     RTS
+
+
+
+
+INIT_SS_STOP     BCLR    PTT,%00110000
+              RTS
+***********************************************************
+STATE_THINK   JSR     INIT_SS_THINK
+              BRSET   PORTAD0,$08,NO_STOP       ; Check if the rear bumper is triggered
+              JSR     INIT_SS_STOP              ; Initialize the all stop state
+              MOVB    #SS_STOP,CRNT_STATE       ; Set the current state to all stop
+              BRA     THINK_EXIT                  ; Return
+
+NO_STOP       BRSET   PORTAD0,$04,NO_REV        ; Check if the front bumper is triggered
+              JSR     INIT_SS_REV               ; Initialize the reverse state
+              MOVB    #SS_REV,CRNT_STATE           ; Set the current state to reverse
+              BRA     THINK_EXIT                  ; Return
+
+NO_REV        LDAA    #TH_BOW
+              CMPA    SENSOR_BOW          ; bow is on black
+              BLO     INIT_SS_FWD
+              
+              LDAA    #TH_MIDDLE
+              CMPA    SENSOR_MID          ; middle on black
+              BLO     MIDDLE_IS_BLK
+
+              LDAA    #TH_LINE_LEFT
+              CMPA    SENSOR_LINE
+              BLO     INIT_SS_RIGHT             ; if threshold is greater than sensor, start a right turn
+              ;BRA     THINK_EXIT
+
+              LDAA    #TH_LINE_RIGHT  ;a0
+              CMPA    SENSOR_LINE
+              BHI     INIT_SS_LEFT              ; if threshold is less than sensor, start a left turn
+              
+              BRA     THINK_EXIT
+
+
+INIT_SS_THINK BCLR    PTT,%00110000
+              RTS
+
+MIDDLE_IS_BLK NOP
+THINK_EXIT    RTS
+
+***********************************************************
+STATE_START   BRCLR   PORTAD0,$08,NO_FWD  ; Check if rear bumper is released
+              JSR     INIT_SS_FWD         ; If so, initialize the forward state
+              MOVB    #SS_THINK,CRNT_STATE  ; Set current state to forward
               BRA     START_EXIT
+
 
 NO_FWD        NOP
 START_EXIT    RTS
 ***********************************************************
-FWD_ST        BSET    PTT,%00110000
-              BRSET   PORTAD0,$08,NO_ALL_STP  ; check rear bump
-              JSR     INIT_ALL_STP
-              MOVB    #ALL_STP,CRNT_STATE
-              BRA     FWD_EXIT
-
-
-NO_ALL_STP    BRSET   PORTAD0,$04,NO_FWD_TRN  ; check front bump
-              JSR     INIT_REV
-              MOVB    #REV,CRNT_STATE
-              BRA     FWD_EXIT
-
-NO_FWD_TRN    LDAA    TH_MIDDLE
-              CMPA    SENSOR_MID
-              BGT     FWD_EXIT
-
-              LDAA    TH_LINE_LEFT
-              CMPA    SENSOR_LINE
-              BGT     INIT_R_TURN       ; check if above threshold
-              
-              
-              LDAA    TH_LINE_RIGHT
-              CMPA    SENSOR_LINE
-              BLO     INIT_L_TURN       ; check if less than threshold
-              RTS
-
-INIT_L_TURN   MOVB    #L_TURN,CRNT_STATE
-              RTS
-              
-INIT_R_TURN   MOVB    #R_TURN,CRNT_STATE
-              RTS
-
-
-R_TURN_ST     BCLR    PTT,%00100000
-              MOVB    #FWD,CRNT_STATE
-    
-              RTS
-L_TURN_ST     BCLR    PTT,%00010000
-              MOVB    #FWD,CRNT_STATE
-              RTS
-
-
-  
-NO_FWD_TMR    NOP              
+STATE_FWD     BCLR    PORTA,%00000011           ; Set both motor directions to forward
+              BSET    PTT,%00110000             ; Turn on the drive motors
+              LDY     #DLY_FWD     
+              JSR     del_50us
+              BCLR    PTT,%00110000             ; Turn off drive motors
+              MOVB    #SS_THINK,CRNT_STATE                                      
 FWD_EXIT      RTS
 
-LINE_TH_CHECK 
-
+INIT_SS_FWD   MOVB    #SS_FWD,CRNT_STATE
+              RTS
 ***********************************************************
-ALL_STP_ST    BRSET   PORTAD0,$04,NO_START
-              JSR     INIT_ALL_STP
-              MOVB    #START,CRNT_STATE
-              BRA     ALL_STP_EXIT
+STATE_LEFT    BCLR    PORTA,%00000011
+              BSET    PTT,%00100000
+              BCLR    PTT,%00010000
+              LDY     #DLY_LEFT     
+              JSR     del_50us
+              BCLR    PTT,%00110000
+              MOVB    #SS_THINK,CRNT_STATE
+              RTS
+
+INIT_SS_LEFT  MOVB    #SS_LEFT,CRNT_STATE
+              RTS
+***********************************************************
+STATE_RIGHT   BCLR    PORTA,%00000011
+              BSET    PTT,%00010000
+              BCLR    PTT,%00100000
+              LDY     #DLY_RIGHT     
+              JSR     del_50us
+              BCLR    PTT,%00110000
+              MOVB    #SS_THINK,CRNT_STATE
+              RTS
+
+INIT_SS_RIGHT MOVB    #SS_RIGHT,CRNT_STATE
+              RTS
+***********************************************************
+STATE_REV     LDAA    TOF_COUNTER               ; Load the timout counter
+              CMPA    TIME_REV                  ; Check if the forward travel time counter has elapsed
+              BNE     NOT_TIME_REV              ; Return if enough time has NOT passed. [BLT]
+              JSR     INIT_SS_180               ; Initialize the reverse turn state
+              MOVB    #SS_180,CRNT_STATE        ; Set the current state to reverse turn
+              BRA     REV_EXIT                  ; Return
               
-NO_START      NOP
-ALL_STP_EXIT  RTS
-***********************************************************                                                        
+NOT_TIME_REV  NOP
+REV_EXIT      RTS
 
-***********************************************************
-INIT_FWD      BCLR    PORTA,%00000011
-              BSET    PTT,%00110000
-              LDAA    TOF_COUNTER
-              ADDA    #FWD_INT
-              STAA    T_FWD
+INIT_SS_REV   BSET    PORTA,%00000011           ; Set both motor directions to reverse
+              BSET    PTT,%00110000             ; Turn on the drive motors
+              LDAA    TOF_COUNTER               ; Mark the reverse time counter
+              ADDA    #TINT_REV
+              STAA    TIME_REV
               RTS
 ***********************************************************
-INIT_REV      BSET    PORTA,%00000011
-              BSET    PTT,%00110000
-              LDAA    TOF_COUNTER
-              ADDA    #REV_INT
-              STAA    T_REV
-              RTS
-***********************************************************
-INIT_ALL_STP  BCLR    PTT,%00110000
-              RTS
-***********************************************************              
-INIT_FWD_TRN  BSET    PORTA,%00000010
-              LDAA    TOF_COUNTER 
-              ADDA    #FWD_TRN_INT
-              STAA    T_FWD_TRN
-              RTS
-***********************************************************              
-INIT_REV_TRN  BCLR    PORTA,%00000010
-              LDAA    TOF_COUNTER 
-              ADDA    #REV_TRN_INT
-              STAA    T_REV_TRN
-              RTS              
-***********************************************************              
+STATE_180     LDAA    TOF_COUNTER               ; Load the timout counter
+              CMPA    TIME_180                  ; Check if the 180 turn time counter has elapsed
+              BNE     NOT_TIME_180              ; Return if enough time has NOT passed. [BLT]
+              JSR     INIT_SS_FWD               ; Initialize the forward state
+              MOVB    #SS_THINK,CRNT_STATE        ; Set the current state to forward
+              BRA     SPIN_EXIT                  ; Return
+              
+NOT_TIME_180  NOP
+SPIN_EXIT      RTS
+              
+              
+INIT_SS_180   BCLR    PORTA,%00000010           ; Set the right motor direction to forward
+              LDAA    TOF_COUNTER               ; Mark the forward turn-time counter
+              ADDA    #TINT_180
+              STAA    TIME_180
+              RTS 
+***********************************************************             
 ENABLE_TOF    LDAA    #%10000000
               STAA    TSCR1
               STAA    TFLG2
@@ -308,7 +372,7 @@ TOF_ISR       INC     TOF_COUNTER
 DISABLE_TOF   LDAA    #%00000100
               STAA    TSCR2
               RTS
-
+*********************************************************** 
 
 
 
@@ -317,7 +381,7 @@ DISABLE_TOF   LDAA    #%00000100
 
 ;               Initialize ports
 
-INIT            BCLR DDRAD,$FF; Make PORTAD an input (DDRAD @ $0272)
+INIT            BCLR DDRAD,$FF                 ; Make PORTAD an input (DDRAD @ $0272)
                 BSET DDRA,$FF                                    ; Make PORTA an output (DDRA @ $0002)
                 
                 BSET DDRB,%11110000                                   ; Make PORTB an output (DDRB @ $0003)
@@ -455,7 +519,7 @@ RS_MAIN_LOOP    LDAA SENSOR_NUM      ; Select the correct sensor input
 
                 LDAA ATDDR0L         ; A/D conversion is complete in ATDDR0L
                 STAA 0,X            ;  so copy it to the sensor register
-                CPX  #SENSOR_STBD   ; If this is the last reading
+                CPX  #SENSOR_STAR   ; If this is the last reading
                 BEQ  RS_EXIT         ; Then exit
  
                 INC  SENSOR_NUM      ; Else, increment the sensor number
@@ -540,7 +604,7 @@ DP_STATE        EQU TOP_LINE+13
 DP_PORT_SENSOR  EQU BOT_LINE+0
 DP_STBD_SENSOR  EQU BOT_LINE+3
 DP_BUMPERS       EQU BOT_LINE+9
-
+DP_DEBUG        EQU BOT_LINE+13
 
 
 
@@ -560,7 +624,7 @@ DISPLAY_SENSORS LDAA SENSOR_BOW      ; Get the FRONT sensor value
                 LDX  #DP_MID_SENSOR
                 STD  0,X
  
-                LDAA SENSOR_STBD
+                LDAA SENSOR_STAR
                 JSR  BIN2ASC
                 LDX  #DP_STBD_SENSOR
                 STD  0,X
@@ -573,6 +637,11 @@ DISPLAY_SENSORS LDAA SENSOR_BOW      ; Get the FRONT sensor value
                 LDAA  BUMPER_BOW
                 LDAB  BUMPER_STERN
                 LDX   #DP_BUMPERS
+                STD   0,X
+                
+                LDAA  DEBUG_1
+                LDAB  DEBUG_2
+                LDX   #DP_DEBUG
                 STD   0,X
 
                 LDAA  CRNT_DIR
