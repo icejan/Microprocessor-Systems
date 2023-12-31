@@ -1,53 +1,87 @@
-START 		IF	(Rear Bumper Detected)						THEN GOTO THINK
+				CURRENT_STATE := STATE_START
 
-THINK		TURN OFF ALL MOTORS
-		
-		IF	(Rear Bumper Detected)						THEN GOTO ALL_STOP	
+LOOP:			CALL CURRENT_STATE						; Call the 'CURRENT STATE' subroutine
+				GOTO LOOP								; forever
 
-		;T intersection
+STATE_START: 	CURRENT_STATE := THINK					; The START state subroutine
+				Return
 
-		ELSEIF	(SENSOR_A < TH_A)						THEN GOTO LEFT_TURN
-	
-		;left intersection (path open on the left)
+STATE_THINK		IF PATH_PORT == 1 || PATH_STAR == 1		; Check if a path was found
+					CURRENT_STATE:= STATE_INTERSECTION
+					return
 
-		ELSEIF	(SENSOR_D < TH_D)						THEN GOTO LEFT_TURN
+				ELSE
+					CURRENT_STATE:= STATE_FWD
+					Return
 
-		;right intersection (path open on the right)
+STATE_FWD:		IF	REAR_BUMP then						; The THINK state subroutine
+					CURRENT_STATE := STATE_STOP
+					Return
 
-		ELSEIF	(SENSOR_B < TH_B)						THEN GOTO RIGHT_TURN
+				IF	FRONT_BUMP then						
+					CURRENT_STATE := STATE_REVERSE
+					Return
 
-		;steering
+				IF TH_PORT < SENSOR_PORT  			; Sensor B is on black
+					PATH_PORT := 1
+					CURRENT_STATE:= STATE_THINK
+					Return
 
-		ELSEIF	(SENSOR_MID < TH_MIDDLE) && (SENSOR_LINE > TH_LINE_LEFT) 	THEN GOTO L_TURN
-		ELSEIF	(SENSOR_MID < TH_MIDDLE) && (SENSOR_LINE < TH_LINE_RIGHT) 	THEN GOTO R_TURN
+				IF	TH_STAR < SENSOR_STAR 			; Sensor D is on black
+					PATH_STAR := 1
+					CURRENT_STATE:= STATE_THINK
+					Return
+			
+				IF	TH_BOW < SENSOR_BOW					; Sensor A is on black
+					CURRENT_STATE:= STATE_FWD
+					Return
 
-		ELSE 	GOTO FORWARD
+				IF	TH_LINE_LEFT < SENSOR_LINE 			; Sensor E-F is on left of line
+					CURRENT_STATE:= STATE_RIGHT
+					Return
 
-FORWARD		...
-		ELSE GOTO THINK
+				IF	TH_LINE_RIGHT > SENSOR_LINE 		; Sensor E-F is on right of line
+					CURRENT_STATE:= STATE_LEFT
 
-REVERSE		...
-		ELSE GOTO TURN_AROUND
-		
+				Else
+					GO FORWARD
+					Return
 
-;subroutine steers left to position on line
+STATE_REV		IF 	T > TIME_REV then					; The REVERSE state subroutine
+					CURRENT_STATE := STATE_180
+					Return
+				ELSE 
+					Return
 
-L_TURN		IF 	(T > T_R_TURN )							THEN GOTO FORWARD
-			ELSE	GOTO L_TURN
+STATE_LEFT		IF	T > DLY_LEFT then					; The LEFT state subroutine
+					CURRENT_STATE := THINK				
+					Return
+				ELSE
+					Return
 
-;subroutine steers right to position on line
-R_TURN		IF 	(T > T_LEFT)							THEN GOTO FORWARD
-			ELSE	GOTO R_TURN
+STATE_RIGHT		IF 	T > DLY_RIGHT then					; The RIGHT state subroutine	
+					CURRENT_STATE := STATE_THINK
+					Return
+				ELSE
+					Return
 
-;turning left at an intersection
-LEFT_TURN	IF 	(T > 							THEN GOTO FORWARD
-			ELSE	GOTO LEFT_TURN
+STATE_INTERSECTION	IF 	COMPLETED_180 == 0					; Intersection state subroutine
+						IF PATH_PORT == 1
+							CURRENT_STATE := STATE_LEFT
+							INTERSECT_LAST := 0
 
-;turning right at an intersection
-RIGHT_TURN	IF 		...							THEN GOTO FORWARD
-			ELSE	GOTO RIGHT_TURN
+					
+					Return
+				ELSE
+					Return
 
-;180 turn
-TURN_AROUND
 
-ALL_STOP	GOTO 	ALL_STOP
+STATE_180		IF	T > TIME_180 then					; The 180 state subroutine
+					COMPLETED_180 := 1 					; Completed 180 turn
+					CURRENT_STATE := STATE_THINK
+					Return
+				ELSE
+					Return
+
+STATE_STOP		CURRENT_STATE := STATE_STOP 			; The STOP state subroutine
+				Return
