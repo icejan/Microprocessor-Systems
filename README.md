@@ -16,7 +16,6 @@ This program is implemented on an eebot mobile robot to navigate through a maze 
 The project is created with:
 * Assembly Language
 * An eebot with a HCS12 Microcontroller
-* EVALH1 trainer board
 * CodeWarrior IDE
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
